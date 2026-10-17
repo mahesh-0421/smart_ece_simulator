@@ -61,10 +61,16 @@ class OctaveService:
 
             # Wrapper logic to catch plots headlessly without hanging GUI
             # Note: graphics_toolkit('gnuplot') allows headless rasterization without X11/DISPLAY
-            preamble = (
+                       preamble = (
                 "warning('off', 'all');\n"
                 "try\n"
                 "  graphics_toolkit('gnuplot');\n"
+                "catch\n"
+                "end_try_catch\n"
+                "try\n"
+                "  set(0, 'defaultfigurevisible', 'off');\n"
+                "  set(0, 'defaultaxesfontname', 'DejaVu Sans');\n"
+                "  set(0, 'defaulttextfontname', 'DejaVu Sans');\n"
                 "catch\n"
                 "end_try_catch\n"
             )
