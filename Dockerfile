@@ -14,12 +14,15 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Install system compilers and simulation runtimes
+# Install system compilers, simulation runtimes and fonts (fonts needed for Octave plots)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     octave \
     gnuplot \
     iverilog \
+    fontconfig \
+    fonts-dejavu-core \
     curl \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
