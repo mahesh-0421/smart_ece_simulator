@@ -32,14 +32,24 @@ class OctaveService:
             "set(0, 'defaulttextfontsize', 10);\n"
         )
 
+    # Tries two PNG devices and prints PLOT_ERROR lines to the console if saving fails
     POSTAMBLE = (
         "\n"
         "figs = get(0, 'children');\n"
         "if ~isempty(figs)\n"
-        "  try\n"
-        "    print(figs(1), 'plot_output.png', '-dpng', '-r100');\n"
-        "  catch\n"
-        "  end_try_catch\n"
+        "  devs = {'-dpng', '-dpngcairo'};\n"
+        "  for i = 1:numel(devs)\n"
+        "    try\n"
+        "      print(figs(1), 'plot_output.png', devs{i});\n"
+        "      if exist('plot_output.png', 'file')\n"
+        "        break;\n"
+        "      end\n"
+        "    catch err\n"
+        "      disp(['PLOT_ERROR (' devs{i} '): ' err.message]);\n"
+        "    end_try_catch\n"
+        "  end\n"
+        "else\n"
+        "  disp('PLOT_ERROR: no figure found');\n"
         "endif\n"
     )
 
