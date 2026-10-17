@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from app.core.config import settings
 
-# Fonts tried in order if Octave's text renderer fails
-FALLBACK_FONTS = ["Arial", "Helvetica", "DejaVu Sans"]
+# Fonts tried in order if Octave's text renderer fails (Linux-friendly first)
+FALLBACK_FONTS = ["DejaVu Sans", "Liberation Sans", "FreeSans"]
 
 
 class OctaveService:
@@ -65,12 +65,18 @@ class OctaveService:
             safe_filename
         ]
 
+        # Writable HOME/cache so fontconfig and Octave work for the sandbox user
+        env = os.environ.copy()
+        env["HOME"] = str(work_dir)
+        env["XDG_CACHE_HOME"] = str(work_dir / ".cache")
+
         proc = subprocess.run(
             cmd,
             cwd=str(work_dir),
             capture_output=True,
             text=True,
-            timeout=settings.MAX_EXECUTION_TIME_SECONDS
+            timeout=settings.MAX_EXECUTION_TIME_SECONDS,
+            env=env
         )
         duration_ms = round((time.time() - start_time) * 1000, 2)
 

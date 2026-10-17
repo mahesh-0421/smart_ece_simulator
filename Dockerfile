@@ -17,10 +17,12 @@ ENV PYTHONUNBUFFERED=1
 # Install system compilers, simulation runtimes and fonts (fonts needed for Octave plots)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     octave \
-    gnuplot \
+    gnuplot-nox \
     iverilog \
     fontconfig \
     fonts-dejavu-core \
+    fonts-liberation \
+    fonts-freefont-ttf \
     curl \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
@@ -44,7 +46,16 @@ WORKDIR /app/backend
 RUN useradd -m -u 1000 ece_user && \
     chown -R ece_user:ece_user /app
 
+# Writable home/cache for the unprivileged user (fontconfig, Octave)
+ENV HOME=/home/ece_user
+ENV XDG_CACHE_HOME=/tmp/.cache
+
 USER ece_user
+
+# Build-time check: prints installed fonts and tests a headless Octave plot
+RUN fc-list | head -5 && \
+    octave-cli --no-gui --eval "graphics_toolkit('gnuplot'); f=figure('visible','off'); plot(1:3); title('t'); print(f,'/tmp/t.png','-dpng'); disp('PLOT TEST OK')" \
+    || echo "PLOT TEST FAILED"
 
 EXPOSE 8000
 
