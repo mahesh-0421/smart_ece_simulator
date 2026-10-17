@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     fonts-liberation \
     fonts-freefont-ttf \
+    fonts-freefont-otf \
     curl \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
@@ -52,9 +53,8 @@ ENV XDG_CACHE_HOME=/tmp/.cache
 
 USER ece_user
 
-# Build-time check: prints installed fonts and tests a headless Octave plot
-RUN fc-list | head -5 && \
-    octave-cli --no-gui --eval "graphics_toolkit('gnuplot'); f=figure('visible','off'); plot(1:3); title('t'); print(f,'/tmp/t.png','-dpng'); disp('PLOT TEST OK')" \
+# Build-time check: tests a headless Octave plot (look for PLOT TEST OK in build logs)
+RUN octave-cli --no-gui --eval "graphics_toolkit('gnuplot'); f=figure('visible','off'); plot(1:3); title('t'); print(f,'/tmp/t.png','-dpng'); disp('PLOT TEST OK')" \
     || echo "PLOT TEST FAILED"
 
 EXPOSE 8000
