@@ -7,10 +7,112 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from app.core.config import settings
 
+# Fonts tried in order if Octave's text renderer fails
+FALLBACK_FONTS = ["Arial", "Helvetica", "DejaVu Sans"]
+
+
 class OctaveService:
     @staticmethod
     def is_available() -> bool:
         return settings.octave_path is not None and os.path.exists(settings.octave_path)
+
+    @staticmethod
+    def _build_preamble(font: str) -> str:
+        return (
+            "warning('off', 'all');\n"
+            "try\n"
+            "  graphics_toolkit('gnuplot');\n"
+            "catch\n"
+            "end_try_catch\n"
+            "set(0, 'defaultfigurevisible', 'off');\n"
+            "set(0, 'defaultfigureposition', [0 0 800 600]);\n"
+            f"set(0, 'defaultaxesfontname', '{font}');\n"
+            f"set(0, 'defaulttextfontname', '{font}');\n"
+            "set(0, 'defaultaxesfontsize', 10);\n"
+            "set(0, 'defaulttextfontsize', 10);\n"
+        )
+
+    POSTAMBLE = (
+        "\n"
+        "figs = get(0, 'children');\n"
+        "if ~isempty(figs)\n"
+        "  try\n"
+        "    print(figs(1), 'plot_output.png', '-dpng', '-r100');\n"
+        "  catch\n"
+        "  end_try_catch\n"
+        "endif\n"
+    )
+
+    @classmethod
+    def _run_once(cls, octave_exe: str, work_dir: Path, safe_filename: str,
+                  code: str, font: str, start_time: float) -> Dict[str, Any]:
+        script_path = work_dir / safe_filename
+        plot_file = work_dir / "plot_output.png"
+
+        # Remove any plot left over from a previous attempt
+        if plot_file.exists():
+            plot_file.unlink()
+
+        full_script_content = cls._build_preamble(font) + code + cls.POSTAMBLE
+        script_path.write_text(full_script_content, encoding="utf-8")
+
+        cmd = [
+            octave_exe,
+            "--quiet",
+            "--no-gui",
+            "--no-history",
+            "-W",
+            safe_filename
+        ]
+
+        proc = subprocess.run(
+            cmd,
+            cwd=str(work_dir),
+            capture_output=True,
+            text=True,
+            timeout=settings.MAX_EXECUTION_TIME_SECONDS
+        )
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+
+        cleaned_stderr = "\n".join([
+            line for line in stderr.splitlines()
+            if not line.startswith("warning: using the")
+            and "is discouraged" not in line
+            and "FC_WEIGHT" not in line
+        ]).strip()
+
+        cleaned_stdout = "\n".join([
+            line for line in stdout.splitlines()
+            if "FC_WEIGHT" not in line
+        ]).strip()
+
+        has_plot = False
+        plot_b64 = None
+        if plot_file.exists() and plot_file.stat().st_size > 0:
+            has_plot = True
+            with open(plot_file, "rb") as pf:
+                b64_str = base64.b64encode(pf.read()).decode("ascii")
+                plot_b64 = f"data:image/png;base64,{b64_str}"
+
+        success = (proc.returncode == 0) and not ("error:" in cleaned_stderr.lower())
+        error_summary = None
+        if not success:
+            lines = [l for l in cleaned_stderr.splitlines() if l.strip()]
+            error_summary = lines[0] if lines else "Script execution failed."
+
+        return {
+            "success": success,
+            "stdout": cleaned_stdout[:settings.MAX_OUTPUT_SIZE_BYTES],
+            "stderr": cleaned_stderr[:settings.MAX_OUTPUT_SIZE_BYTES],
+            "exit_code": proc.returncode,
+            "duration_ms": duration_ms,
+            "has_plot": has_plot,
+            "plot_image_base64": plot_b64,
+            "error_summary": error_summary
+        }
 
     @classmethod
     def execute_script(cls, code: str, filename: str = "script.m") -> Dict[str, Any]:
@@ -46,7 +148,6 @@ class OctaveService:
                 "error_summary": "Source code too large."
             }
 
-        # Safe filename sanitization
         safe_filename = Path(filename).name
         if not safe_filename.endswith(".m"):
             safe_filename += ".m"
@@ -56,95 +157,19 @@ class OctaveService:
 
         try:
             work_dir = Path(temp_dir.name)
-            script_path = work_dir / safe_filename
-            plot_file = work_dir / "plot_output.png"
-
-            # Wrapper logic to catch plots headlessly without hanging GUI
-            # Note: graphics_toolkit('gnuplot') allows headless rasterization without X11/DISPLAY
-            preamble = (
-                "warning('off', 'all');\n"
-                "try\n"
-                "  graphics_toolkit('gnuplot');\n"
-                "catch\n"
-                "end_try_catch\n"
-            )
-
-            # Suffix checks if any figures are open and prints the active/last figure
-            postamble = (
-                "\n"
-                "figs = get(0, 'children');\n"
-                "if ~isempty(figs)\n"
-                "  try\n"
-                "    print(figs(1), 'plot_output.png', '-dpng');\n"
-                "  catch\n"
-                "  end_try_catch\n"
-                "endif\n"
-            )
-
-            full_script_content = preamble + code + postamble
-            script_path.write_text(full_script_content, encoding="utf-8")
-
-            # Execute Octave in isolated subprocess with strict argument array
-            cmd = [
-                octave_exe,
-                "--quiet",
-                "--no-gui",
-                "--no-history",
-                "-W",
-                safe_filename
-            ]
+            result: Optional[Dict[str, Any]] = None
 
             try:
-                proc = subprocess.run(
-                    cmd,
-                    cwd=str(work_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=settings.MAX_EXECUTION_TIME_SECONDS
-                )
-                duration_ms = round((time.time() - start_time) * 1000, 2)
-
-                stdout = proc.stdout or ""
-                stderr = proc.stderr or ""
-
-                # Filter out gnuplot/fltk warning lines or FC_WEIGHT debug strings if Octave produces them
-                cleaned_stderr = "\n".join([
-                    line for line in stderr.splitlines()
-                    if not line.startswith("warning: using the")
-                    and "is discouraged" not in line
-                    and "FC_WEIGHT" not in line
-                ]).strip()
-
-                cleaned_stdout = "\n".join([
-                    line for line in stdout.splitlines()
-                    if "FC_WEIGHT" not in line
-                ]).strip()
-
-                # Check if plot was produced
-                has_plot = False
-                plot_b64 = None
-                if plot_file.exists() and plot_file.stat().st_size > 0:
-                    has_plot = True
-                    with open(plot_file, "rb") as pf:
-                        b64_str = base64.b64encode(pf.read()).decode("ascii")
-                        plot_b64 = f"data:image/png;base64,{b64_str}"
-
-                success = (proc.returncode == 0) and not ("error:" in cleaned_stderr.lower())
-                error_summary = None
-                if not success:
-                    lines = [l for l in cleaned_stderr.splitlines() if l.strip()]
-                    error_summary = lines[0] if lines else "Script execution failed."
-
-                return {
-                    "success": success,
-                    "stdout": cleaned_stdout[:settings.MAX_OUTPUT_SIZE_BYTES],
-                    "stderr": cleaned_stderr[:settings.MAX_OUTPUT_SIZE_BYTES],
-                    "exit_code": proc.returncode,
-                    "duration_ms": duration_ms,
-                    "has_plot": has_plot,
-                    "plot_image_base64": plot_b64,
-                    "error_summary": error_summary
-                }
+                for idx, font in enumerate(FALLBACK_FONTS):
+                    result = cls._run_once(
+                        octave_exe, work_dir, safe_filename, code, font, start_time
+                    )
+                    # Retry with next font only for the text-renderer failure
+                    is_font_error = "ft_text_renderer" in (result["stderr"] or "")
+                    if is_font_error and idx < len(FALLBACK_FONTS) - 1:
+                        continue
+                    break
+                return result
 
             except subprocess.TimeoutExpired:
                 duration_ms = round((time.time() - start_time) * 1000, 2)
