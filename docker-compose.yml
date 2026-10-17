@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  smart-ece-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart_ece_lab_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - MAX_EXECUTION_TIME_SECONDS=15
+      - MAX_SOURCE_CODE_SIZE_BYTES=65536
+      - MAX_OUTPUT_SIZE_BYTES=262144
+      - DATABASE_URL=sqlite:///./smart_ece_lab.db
+      - AI_PROVIDER=
+      - AI_API_KEY=
+    volumes:
+      - ece_lab_data:/app/backend/data
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+volumes:
+  ece_lab_data:
